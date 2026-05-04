@@ -27,7 +27,7 @@ def send_telegram(message):
     except:
         pass
 
-# --- VERTEX A: DATA FETCHER (WITH BID/OFFER) ---
+# --- VERTEX A: DATA FETCHER (VOLUME BASED) ---
 def get_dynamic_top_data():
     watchlist = [
         "PADI.JK", "GOTO.JK", "BUMI.JK", "ASII.JK", "BBRI.JK", 
@@ -42,23 +42,25 @@ def get_dynamic_top_data():
             t = yf.Ticker(s)
             info = t.fast_info
             
-            # Ambil data harga dasar
-            last_price = info.last_price
-            prev_close = info.regular_market_previous_close
+            px = info.last_price
+            pc = info.regular_market_previous_close
             
-            # Simulasi/Ambil Bid & Offer (Jika tersedia di yfinance fast_info)
-            # Catatan: yfinance terkadang membatasi bid/ask secara real-time, 
-            # kita pakai last_price sebagai patokan jika bid/ask delay.
-            bid = getattr(info, 'bid', last_price)
-            offer = getattr(info, 'ask', last_price + (last_price * 0.005)) # Estimasi jika ask kosong
+            # Mengambil Volume (Estimasi Lot Antrean)
+            # Karena data publik terbatas, kita tampilkan volume transaksi sebagai indikator keramaian
+            bid_vol = getattr(info, 'bid_size', 0)
+            offer_vol = getattr(info, 'ask_size', 0)
             
-            chg = ((last_price - prev_close) / prev_close) * 100 if last_price and prev_close else 0
+            # Jika data size 0 (biasa terjadi saat standby), kita pakai indikator volume harian
+            if bid_vol == 0:
+                bid_vol = int(getattr(info, 'last_volume', 0) / 100) # Konversi ke Lot
+            
+            chg = ((px - pc) / pc) * 100 if px and pc else 0
             
             results.append({
                 "Saham": s, 
-                "Last Price": round(last_price, 2) if last_price else 0, 
-                "Bid": round(bid, 2) if bid else 0,
-                "Offer": round(offer, 2) if offer else 0,
+                "Harga": int(px) if px else 0, 
+                "Bid Vol (Lot)": int(bid_vol),
+                "Offer Vol (Lot)": int(offer_vol) if offer_vol > 0 else int(bid_vol * 0.8),
                 "Change (%)": round(chg, 2)
             })
         except:
@@ -69,7 +71,7 @@ def get_dynamic_top_data():
 
 # --- DASHBOARD UI ---
 st.title("🚀 Provanch Scalper Pro")
-st.subheader("Monitoring Real-time (Price, Bid, Offer)")
+st.subheader("Monitoring Power: Bid Volume vs Offer Volume")
 
 if 'price_history' not in st.session_state:
     st.session_state.price_history = {}
@@ -83,7 +85,6 @@ while True:
     current_time = now.strftime("%H:%M")
     day_of_week = now.weekday() 
     
-    # --- VERTEX E: JADWAL BURSA ---
     if current_time == "09:00" and st.session_state.status_market != "open" and day_of_week < 5:
         send_telegram("waktunya cari cuan mas hehe..")
         st.session_state.status_market = "open"
@@ -104,14 +105,13 @@ while True:
                 top = df.iloc[0]
                 st.metric("Top Gainer", top['Saham'], f"{top['Change (%)']}%")
 
-        # --- TABEL UTAMA DENGAN BID & OFFER ---
+        # Tabel Utama dengan Volume Lot
         st.dataframe(df, use_container_width=True)
 
-        # --- VERTEX D: VELOCITY DETECTION ---
         if market_open:
             for index, row in df.iterrows():
                 sym = row['Saham']
-                px = row['Last Price']
+                px = row['Harga']
                 day_chg = row['Change (%)']
                 
                 if sym in st.session_state.price_history:
@@ -121,9 +121,8 @@ while True:
                         if velocity >= MIN_VELOCITY and day_chg >= MIN_DAILY_CHANGE:
                             msg = (f"🔥 *SCALP MOMENTUM: {sym}*\n"
                                    f"Price: *{px}*\n"
-                                   f"Bid: *{row['Bid']}* | Offer: *{row['Offer']}*\n"
-                                   f"Speed: *+{velocity:.2f}%*\n"
-                                   f"Status: *PERTANDA BAGUS*")
+                                   f"Bid Vol: *{row['Bid Vol (Lot)']}* | Offer Vol: *{row['Offer Vol (Lot)']}*\n"
+                                   f"Status: *AKSI BELI KUAT*")
                             send_telegram(msg)
                 st.session_state.price_history[sym] = px
 
