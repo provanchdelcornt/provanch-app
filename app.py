@@ -1,53 +1,48 @@
 import streamlit as st
-import feedparser
-import requests
-import time
-import re
-from datetime import datetime
+import yfinance as yf
+import pandas as pd
+from datetime import datetime, timedelta
 
-# --- CONFIGURATION ---
-TOKEN = "8571059270:AAGV-6nd5FrfXLxCr_GtDtKHEkceeR3HjJ4"
-CHAT_ID = "1464769031"
+# --- CONFIGURATION UI ---
+st.set_page_config(page_title="Provanch Stock Analyzer", layout="wide")
+st.title("📈 Provanch Stock Analysis")
+st.subheader("Bot 1: Khusus Analisa Teknikal & Data Saham")
 
-FEEDS = {
-    "CNBC Market": "https://www.cnbcindonesia.com/market/rss",
-    "Kontan Saham": "https://www.kontan.co.id/rss/saham",
-    "Bisnis News": "https://www.bisnis.com/rss/indeks"
-}
+# --- SIDEBAR INPUT ---
+ticker = st.sidebar.text_input("Masukkan Kode Saham (Contoh: GOTO.JK, BBCA.JK)", "GOTO.JK")
+period = st.sidebar.selectbox("Periode Data", ("1mo", "3mo", "6mo", "1y", "max"))
 
-# Tampilan di Website Streamlit
-st.set_page_config(page_title="Provanch Intelligence", page_icon="📈")
-st.title("🚀 Provanch News Intelligence")
-st.write("Sistem sedang memantau market dan mengirim notif ke Telegram Rifky.")
+# --- PROSES AMBIL DATA ---
+try:
+    data = yf.download(ticker, period=period)
+    
+    if not data.empty:
+        # Kalkulasi MA sederhana untuk bantu day trade
+        data['MA20'] = data['Close'].rolling(window=20).mean()
+        
+        # Tampilan Grafik Utama
+        st.line_chart(data[['Close', 'MA20']])
+        
+        # Kolom Statistik
+        col1, col2, col3 = st.columns(3)
+        last_price = data['Close'].iloc[-1]
+        prev_price = data['Close'].iloc[-2]
+        change = ((last_price - prev_price) / prev_price) * 100
+        
+        col1.metric("Harga Terakhir", f"Rp {last_price:,.0f}", f"{change:.2f}%")
+        col2.metric("Volume", f"{data['Volume'].iloc[-1]:,.0f}")
+        col3.metric("Highest (Period)", f"Rp {data['High'].max():,.0f}")
 
-def clean_html(text):
-    return re.sub(re.compile('<.*?>'), '', text)
+        # Tabel Data
+        st.write("### Data Historis Terakhir")
+        st.dataframe(data.tail(10))
+        
+    else:
+        st.error("Data tidak ditemukan. Pastikan kode saham benar (pakai .JK untuk IHSG).")
 
-def send_telegram(message):
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
-    try:
-        requests.post(url, json=payload, timeout=10)
-    except:
-        pass
+except Exception as e:
+    st.error(f"Terjadi kesalahan: {e}")
 
-# Gunakan tombol buat memicu pengecekan di web
-if st.button('Cek Berita Sekarang'):
-    st.info("Sedang mengecek sumber berita...")
-    for source_name, url in FEEDS.items():
-        feed = feedparser.parse(url)
-        if feed.entries:
-            entry = feed.entries[0]
-            title = entry.title
-            st.success(f"Berita Terbaru dari {source_name} ditemukan!")
-            st.write(f"**{title}**")
-            
-            # Kirim ke Telegram juga
-            msg = f"🆕 *CEK MANUAL: {source_name}*\n\n📍 {title}\n\n🔗 [Link]({entry.link})"
-            send_telegram(msg)
-else:
-    st.write("Klik tombol di atas untuk tes manual atau biarkan bot jalan otomatis.")
-
-# Bagian Auto-Loop (Hanya jika dijalankan di server)
-# Catatan: Di Streamlit Cloud, while True bisa bikin aplikasi stuck/hitam. 
-# Lebih baik jalankan bot utama kamu di PythonAnywhere yang tadi sudah berhasil.
+# Footer tetap bersih tanpa kodingan Telegram
+st.divider()
+st.caption("Provanch Stock Analysis System v1.0")
