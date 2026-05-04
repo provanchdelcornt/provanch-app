@@ -16,6 +16,10 @@ REFRESH_INTERVAL = 30
 
 st.set_page_config(page_title="Provanch 3.2 - Dynamic Hybrid Scanner", layout="wide")
 
+# Inisialisasi state untuk Heartbeat (biar ga spam setiap detik)
+if 'last_heartbeat' not in st.session_state:
+    st.session_state.last_heartbeat = datetime.now() - timedelta(hours=2)
+
 # Sidebar - Strategi Selection
 st.sidebar.header("⚙️ Strategy Selector")
 trading_mode = st.sidebar.selectbox(
@@ -27,8 +31,18 @@ trading_mode = st.sidebar.selectbox(
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
-    try: requests.post(url, json=payload, timeout=5)
-    except: pass
+    try: 
+        requests.post(url, json=payload, timeout=5)
+    except: 
+        pass
+
+# Fungsi Heartbeat: Cek waktu, kirim notif tiap 2 jam
+def check_system_heartbeat():
+    now = datetime.now()
+    diff = now - st.session_state.last_heartbeat
+    if diff.total_seconds() >= 7200: # 7200 detik = 2 Jam
+        send_telegram("✅ **Sistem aman dan masih jalan.**")
+        st.session_state.last_heartbeat = now
 
 def get_market_data(mode):
     tickers = ["PADI.JK", "GOTO.JK", "BUMI.JK", "BRMS.JK", "RAAM.JK", "TINS.JK", "ELSA.JK", "ENRG.JK", "ASRI.JK", "GZCO.JK", "WIFI.JK"]
@@ -52,7 +66,7 @@ def get_market_data(mode):
 
             if mode == "BSJP":
                 power_15m = ((px - valid_data['Close'].iloc[-3]) / valid_data['Close'].iloc[-3]) * 100
-                if px > vwap and power_15m > 0.3: status = "🔥 BSJP READY"
+                if px > vwap and power_15m > 0.4: status = "🔥 BSJP READY"
                 score = power_15m + chg
             elif mode == "Day Trade":
                 if px > vwap and chg > 1.5: status = "📈 TREND UP"
@@ -61,6 +75,7 @@ def get_market_data(mode):
                 vol_ratio = vol_now / vol_avg if vol_avg > 0 else 0
                 if vol_ratio > 3.0 and 1.0 < chg < 6.0: 
                     status = "💥 MELEDAK"
+                    send_telegram(f"⚠️ **METHOD G ALERT!**\nSaham: {s}\nVol Ratio: {round(vol_ratio,1)}x")
                 score = vol_ratio
             else: # Scalping
                 if px > vwap and chg > 2.0: status = "🚀 SCALP"
@@ -79,6 +94,10 @@ placeholder = st.empty()
 # 🔒 FEATURE LOCKED: Refresh Logic
 while True:
     now_wib = datetime.utcnow() + timedelta(hours=7)
+    
+    # Jalankan pengecekan Heartbeat
+    check_system_heartbeat()
+    
     df, all_hist = get_market_data(trading_mode)
 
     with placeholder.container():
@@ -102,36 +121,13 @@ while True:
         st.subheader(f"📑 Detail Analisa: {trading_mode}")
         
         if trading_mode == "Scalping":
-            st.markdown("""
-            - **Tape Reading:** Fokus pada dominasi **HAKA** (Hajar Kanan). Cari antrean Bid yang tebal namun wajar.
-            - **Indicator:** Harga wajib di atas **VWAP** dan menempel di **EMA 9/13**.
-            - **Exit Strategy:** Target profit 1-3% dalam hitungan menit. Cut loss ketat jika harga menembus support.
-            - **Golden Hours:** Efektif pada pukul 09:00 - 10:00 WIB.
-            """)
-        
+            st.markdown("- **Tape Reading:** Fokus pada dominasi **HAKA**. Cari antrean Bid yang tebal.\n- **Indicator:** Harga wajib di atas **VWAP**.\n- **Exit:** Target 1-3% cepat.")
         elif trading_mode == "BSJP":
-            st.markdown("""
-            - **Timing:** Analisa dilakukan pada pukul **14:30 - 14:50 WIB**.
-            - **Price Action:** Mencari saham dengan kondisi **Close near High** (tutup di harga tertinggi).
-            - **Volume:** Harus ada akumulasi/lonjakan volume di akhir sesi perdagangan.
-            - **Tujuan:** Menangkap **Gap Up** (loncat harga) saat pembukaan pasar besok pagi pukul 09:00.
-            """)
-            
+            st.markdown("- **Timing:** Pukul **14:30 - 14:50 WIB**.\n- **Price Action:** Kondisi **Close near High**.\n- **Tujuan:** Menangkap **Gap Up** besok pagi.")
         elif trading_mode == "Day Trade":
-            st.markdown("""
-            - **Timeframe:** Mengamati pergerakan dalam rentang 15 - 30 menit.
-            - **Analisa:** Mencari momentum **Breakout** dari rentang harga pembukaan (Opening Range).
-            - **Indicator:** Menggunakan **RSI** untuk melihat kejenuhan dan **VWAP** sebagai konfirmasi tren harian.
-            - **Rule:** Semua posisi harus sudah dijual (*cash*) sebelum pasar tutup sore ini.
-            """)
-            
+            st.markdown("- **Timeframe:** 15 - 30 menit.\n- **Momentum:** Breakout Opening Range.\n- **Rule:** Wajib *cash* sebelum market tutup.")
         elif trading_mode == "Gorengan Finder (Method G)":
-            st.markdown("""
-            - **Bandarmology:** Mendeteksi fase **Wake Up** (saham tidur yang mulai bergerak).
-            - **Volume Spike:** Filter otomatis mencari volume yang meledak **>3x rata-rata harian**.
-            - **Price Range:** Mencari kenaikan awal (antara 1% - 6%). Jangan kejar jika sudah naik terlalu tinggi (>10%).
-            - **High Risk:** Wajib disiplin! Langsung keluar jika 'tembok' Bid penjaga roboh.
-            """)
+            st.markdown("- **Wake Up:** Saham tidur yang mulai bergerak.\n- **Volume Spike:** Ledakan volume **>3x rata-rata**.\n- **High Risk:** Disiplin stop loss ketat!")
 
     time.sleep(REFRESH_INTERVAL)
     st.rerun()
