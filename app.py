@@ -6,14 +6,12 @@ import requests
 from datetime import datetime, timedelta
 
 # ========================================================
-# --- PERMANENT LOCK CONFIGURATION (DO NOT CHANGE) ---
+# --- PERMANENT LOCK CONFIGURATION ---
 # ========================================================
-# Fitur 'Notif Ready' dan 'Refresh' Terkunci Secara Permanen
 TOKEN = "8571059270:AAGV-6nd5FrfXLxCr_GtDtKHEkceeR3HjJ4"
-CHAT_ID = "1464769031" # @Bentartapinyaman
+CHAT_ID = "1464769031" 
 
-# --- PARAMETERS SCALPING ---
-REFRESH_INTERVAL = 30    # Locked
+REFRESH_INTERVAL = 30    
 MIN_VELOCITY = 1.0       
 TP_PCT = 2.5             
 SL_PCT = 1.8             
@@ -21,16 +19,13 @@ SL_PCT = 1.8
 
 st.set_page_config(page_title="Provanch Scalper Pro", layout="wide")
 
-# --- VERTEX C: NOTIF READY (TELEGRAM) ---
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
-    try:
-        requests.post(url, json=payload)
-    except:
-        pass
+    try: requests.post(url, json=payload)
+    except: pass
 
-# --- VERTEX A: DYNAMIC DATA FETCHER (VOLUME & SIGNAL) ---
+# --- VERTEX A: DATA FETCHER (ANTI-NONE LOGIC) ---
 def get_dynamic_top_data():
     watchlist = [
         "PADI.JK", "GOTO.JK", "BUMI.JK", "ASII.JK", "BBRI.JK", 
@@ -43,61 +38,50 @@ def get_dynamic_top_data():
     for s in watchlist:
         try:
             t = yf.Ticker(s)
+            # Ambil data harga hari ini
             info = t.fast_info
             px = info.last_price
-            pc = info.regular_market_previous_close
             
-            if not px: continue
+            # --- FIX NYANGKUT: Ambil history 2 hari buat cari harga Close kemarin ---
+            hist = t.history(period="2d")
+            if len(hist) >= 2:
+                pc = hist['Close'].iloc[-2] # Harga tutup kemarin
+            else:
+                pc = info.regular_market_previous_close
             
-            # Ambil Estimasi Volume (Lot)
-            # Menggunakan volume transaksi harian dibagi 100 untuk estimasi Lot
+            if not px or not pc: continue
+            
             vol_raw = getattr(info, 'last_volume', 0)
-            lot_vol = int(vol_raw / 100) if vol_raw > 0 else 0
-            
-            chg = ((px - pc) / pc) * 100 if pc else 0
-            
-            # Logika Signal Entry/SL/TP (Bulat tanpa koma)
-            entry = px
-            sl = px * (1 - (SL_PCT / 100))
-            tp = px * (1 + (TP_PCT / 100))
+            lot_vol = int(vol_raw / 100)
+            chg = ((px - pc) / pc) * 100 
             
             results.append({
                 "Saham": s, 
                 "Harga": int(px), 
                 "Bid Vol (Lot)": lot_vol,
-                "Offer Vol (Lot)": int(lot_vol * 0.8), # Estimasi proporsional
-                "Entry": int(entry),
-                "SL": int(sl),
-                "TP": int(tp),
+                "Offer Vol (Lot)": int(lot_vol * 0.8),
+                "Entry": int(px),
+                "SL": int(px * (1 - (SL_PCT / 100))),
+                "TP": int(px * (1 + (TP_PCT / 100))),
                 "Change (%)": round(chg, 2)
             })
-        except:
-            continue
+        except: continue
     
-    # Auto-sort berdasarkan Change (%) tertinggi agar mirip Stockbit
     return pd.DataFrame(results).sort_values(by="Change (%)", ascending=False)
 
 # --- DASHBOARD UI ---
 st.title("🚀 Provanch Scalper Pro")
-st.subheader("Real-time Monitor (WIB Sync)")
 
 if 'price_history' not in st.session_state:
     st.session_state.price_history = {}
 
 placeholder = st.empty()
 
-# --- MAIN LOOP (WIB TIME & FORCE REFRESH) ---
 while True:
-    # Sinkronisasi Waktu Server ke WIB (UTC+7)
-    now_utc = datetime.utcnow()
-    now_wib = now_utc + timedelta(hours=7)
+    now_wib = datetime.utcnow() + timedelta(hours=7)
+    market_is_open = 9 <= now_wib.hour < 16 and now_wib.weekday() < 5
     
-    current_hour = now_wib.hour
-    day_of_week = now_wib.weekday() 
-    
-    # Deteksi Market Open (Senin-Jumat, 09:00 - 16:00 WIB)
-    market_is_open = 9 <= current_hour < 16 and day_of_week < 5
-    
+    # Tarik data dengan logika anti-None
     df = get_dynamic_top_data()
 
     with placeholder.container():
@@ -109,10 +93,8 @@ while True:
                 top = df.iloc[0]
                 st.metric("Top Gainer", top['Saham'], f"{top['Change (%)']}%")
 
-        # Tabel Utama (Final Format)
         st.dataframe(df, use_container_width=True)
 
-        # --- VERTEX D: VELOCITY & TELEGRAM SIGNAL ---
         if market_is_open:
             for index, row in df.iterrows():
                 sym = row['Saham']
@@ -122,13 +104,10 @@ while True:
                     if old_px > 0:
                         velocity = ((px - old_px) / old_px) * 100
                         if velocity >= MIN_VELOCITY:
-                            msg = (f"🎯 *SIGNAL: {sym}*\n"
-                                   f"Price: *{px}* (Speed: +{velocity:.2f}%)\n"
-                                   f"TP: *{row['TP']}* | SL: *{row['SL']}*\n"
-                                   f"Status: *AKSI BELI KUAT*")
+                            msg = (f"🎯 *SIGNAL: {sym}*\nPrice: *{px}* (+{velocity:.2f}%)\n"
+                                   f"TP: *{row['TP']}* | SL: *{row['SL']}*")
                             send_telegram(msg)
                 st.session_state.price_history[sym] = px
 
-    # --- REFRESH SYSTEM (LOCKED) ---
     time.sleep(REFRESH_INTERVAL)
     st.rerun()
