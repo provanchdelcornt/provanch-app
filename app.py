@@ -25,7 +25,7 @@ def send_telegram(message):
     try: requests.post(url, json=payload)
     except: pass
 
-# --- VERTEX A: DATA FETCHER (ANTI-NONE LOGIC) ---
+# --- VERTEX A: DATA FETCHER (FORCED DATA) ---
 def get_dynamic_top_data():
     watchlist = [
         "PADI.JK", "GOTO.JK", "BUMI.JK", "ASII.JK", "BBRI.JK", 
@@ -38,20 +38,15 @@ def get_dynamic_top_data():
     for s in watchlist:
         try:
             t = yf.Ticker(s)
-            # Ambil data harga hari ini
-            info = t.fast_info
-            px = info.last_price
+            # Ambil history 5 hari terakhir untuk memastikan data CLOSE ada
+            hist = t.history(period="5d")
             
-            # --- FIX NYANGKUT: Ambil history 2 hari buat cari harga Close kemarin ---
-            hist = t.history(period="2d")
-            if len(hist) >= 2:
-                pc = hist['Close'].iloc[-2] # Harga tutup kemarin
-            else:
-                pc = info.regular_market_previous_close
+            if len(hist) < 2: continue
             
-            if not px or not pc: continue
+            px = hist['Close'].iloc[-1] # Harga Terakhir
+            pc = hist['Close'].iloc[-2] # Harga Penutupan Sebelumnya
             
-            vol_raw = getattr(info, 'last_volume', 0)
+            vol_raw = hist['Volume'].iloc[-1]
             lot_vol = int(vol_raw / 100)
             chg = ((px - pc) / pc) * 100 
             
@@ -67,6 +62,7 @@ def get_dynamic_top_data():
             })
         except: continue
     
+    # Sortir agar yang paling cuan di atas
     return pd.DataFrame(results).sort_values(by="Change (%)", ascending=False)
 
 # --- DASHBOARD UI ---
@@ -81,7 +77,6 @@ while True:
     now_wib = datetime.utcnow() + timedelta(hours=7)
     market_is_open = 9 <= now_wib.hour < 16 and now_wib.weekday() < 5
     
-    # Tarik data dengan logika anti-None
     df = get_dynamic_top_data()
 
     with placeholder.container():
