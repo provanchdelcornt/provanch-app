@@ -27,26 +27,37 @@ menu = st.sidebar.radio("Pilih Strategi:", [
 
 ticker = st.sidebar.text_input("Kode Saham", "GOTO.JK").upper()
 
-# --- ENGINE DATA (PERHITUNGAN MANUAL) ---
+# --- ENGINE DATA ---
 @st.cache_data(ttl=60)
 def get_data(symbol):
     try:
-        df = yf.download(symbol, period="60d", interval="1d")
+        # Tambahkan auto_adjust dan actions=False biar data lebih bersih
+        df = yf.download(symbol, period="60d", interval="1d", auto_adjust=True, progress=False)
         if not df.empty:
-            # Hitung MA20 manual tanpa pandas_ta
+            # Paksa ambil kolom Close meskipun Multi-Index
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            
             df['MA20'] = df['Close'].rolling(window=20).mean()
-            # Hitung Avg Vol 20 harian
             df['Avg_Vol_20'] = df['Volume'].rolling(window=20).mean()
             return df
-    except:
+    except Exception as e:
+        st.error(f"Error Koneksi: {e}")
         return None
     return None
 
 df = get_data(ticker)
 
 if df is not None and not df.empty:
-    # Ambil harga terakhir (pastikan formatnya angka tunggal)
-    curr = float(df['Close'].iloc[-1])
+    # Ambil nilai terakhir dengan cara yang lebih aman (.item())
+    try:
+        curr = float(df['Close'].iloc[-1])
+        ma20_val = float(df['MA20'].iloc[-1]) if not pd.isna(df['MA20'].iloc[-1]) else curr
+        vol_now = float(df['Volume'].iloc[-1])
+        vol_avg = float(df['Avg_Vol_20'].iloc[-1])
+    except:
+        st.error("Gagal konversi angka. Coba ganti kode saham.")
+        st.stop()
     
     # --- LOGIKA HARGA & EDUKASI ---
     if menu == "Scalping (Method A)":
@@ -59,12 +70,12 @@ if df is not None and not df.empty:
         entry, cl, tp = curr, curr * 0.97, curr * 1.05
         edu = "Day Trade: Memanfaatkan Opening Range Breakout. Posisi harus Cash sebelum market tutup."
     elif menu == "Swing Trade (Method D)":
-        entry = float(df['MA20'].iloc[-1])
+        entry = ma20_val
         cl, tp = entry * 0.93, entry * 1.15
         edu = "Swing: Beli di area Support MA20 saat Uptrend. Target 10% - 20% hitungan minggu."
     elif menu == "Gorengan Finder (Method G)":
         entry, cl, tp = curr, curr * 0.97, curr * 1.10
-        vol_r = float(df['Volume'].iloc[-1] / df['Avg_Vol_20'].iloc[-1])
+        vol_r = vol_now / vol_avg if vol_avg > 0 else 0
         edu = f"Method G: Speculative Meledak. Vol Ratio saat ini: {vol_r:.2f}x (Target > 3x)."
 
     # --- TAMPILAN ---
@@ -78,4 +89,4 @@ if df is not None and not df.empty:
     st.subheader(f"Chart {ticker}")
     st.line_chart(df[['Close', 'MA20']])
 else:
-    st.error("Ticker salah atau data kosong, Ky.")
+    st.error("Data saham tidak ditemukan. Pastikan ticker benar (Contoh: BBRI.JK).")
