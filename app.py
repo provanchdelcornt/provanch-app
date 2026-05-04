@@ -9,12 +9,10 @@ st.markdown("""
     <style>
     .main { background-color: #0e1117; }
     .stTable { background-color: #1e2130; border-radius: 10px; color: white; }
-    .stMetric { background-color: #1e2130; padding: 15px; border-radius: 10px; border-left: 5px solid #00ff00; }
     </style>
     """, unsafe_allow_html=True)
 
 st.title("🛡️ Provanch Stock Intelligence")
-st.write("Fungsi Utama: Scanner 10 Saham Terbaik < Rp 500 per Strategi")
 
 # --- 2. SIDEBAR STRATEGY SELECTION ---
 st.sidebar.header("🎯 Trading Strategy")
@@ -26,55 +24,57 @@ menu = st.sidebar.radio("Pilih Mode Analisa:", [
     "Gorengan Finder (Method G)"
 ])
 
-# --- 3. ENGINE SCANNER (ANTI-KOSONG & AUTO-FILTER) ---
+# --- 3. ENGINE SCANNER ---
 @st.cache_data(ttl=300)
 def scan_stocks(mode):
-    # Daftar universe saham di bawah 500 & likuid (IHSG)
     watchlist = [
         "GOTO.JK", "BUMI.JK", "ANTM.JK", "DOID.JK", "ELSA.JK", 
         "BRMS.JK", "ENRG.JK", "BUKA.JK", "ADMR.JK", "WIFI.JK",
         "AUTO.JK", "SMBR.JK", "PBSA.JK", "HAIS.JK", "MPXL.JK",
         "SMDR.JK", "MEDC.JK", "PGAS.JK", "PTBA.JK", "TINS.JK",
-        "TLKM.JK", "ASII.JK", "BBRI.JK" # Ditambah buat variasi data
+        "TLKM.JK", "ASII.JK", "BBRI.JK"
     ]
     
     results = []
     for s in watchlist:
         try:
-            # Ambil data 30 hari terakhir
             d = yf.download(s, period="30d", progress=False)
             if not d.empty:
-                # Perbaikan Multi-Index Kolom (Biar gak TypeError)
                 if isinstance(d.columns, pd.MultiIndex):
                     d.columns = d.columns.get_level_values(0)
                 
-                # Ambil data penutupan terakhir (Last Close)
                 price = float(d['Close'].iloc[-1])
-                
-                # FILTER UTAMA: Harga harus dibawah 500
                 if price > 500: continue 
                 
                 prev_c = float(d['Close'].iloc[-2])
                 pct = ((price - prev_c) / prev_c) * 100
                 vol = float(d['Volume'].iloc[-1])
                 avg_vol = d['Volume'].mean()
+                ma20 = d['Close'].rolling(20).mean().iloc[-1]
+                
+                # LOGIKA STATUS
+                if price > ma20 * 1.02 and pct > 0:
+                    status = "🔥 Gacor"
+                elif abs(price - ma20) / ma20 < 0.02:
+                    status = "↔️ Sideways"
+                else:
+                    status = "📉 Buruk"
                 
                 # LOGIKA FILTER PER MENU
                 fit = False
                 if mode == "Scalping (Method A)":
                     if pct > 0.5 and vol > (avg_vol * 0.8): fit = True
                 elif mode == "BSJP (Method B)":
-                    if price >= (d['High'].iloc[-1] * 0.97): fit = True # Close near High
+                    if price >= (d['High'].iloc[-1] * 0.97): fit = True
                 elif mode == "Day Trade (Method C)":
                     if pct > 0: fit = True
                 elif mode == "Swing Trade (Method D)":
-                    ma20 = d['Close'].rolling(20).mean().iloc[-1]
-                    if price > ma20: fit = True # Uptrend
+                    if price > ma20: fit = True
                 elif mode == "Gorengan Finder (Method G)":
-                    if vol > (avg_vol * 1.5): fit = True # Volume Spike
+                    if vol > (avg_vol * 1.5): fit = True
 
                 if fit:
-                    # KALKULASI HARGA OTOMATIS
+                    # KALKULASI HARGA
                     if mode == "Scalping (Method A)": entry, cl, tp = price, price * 0.98, price * 1.02
                     elif mode == "BSJP (Method B)": entry, cl, tp = price, price * 0.985, price * 1.03
                     elif mode == "Day Trade (Method C)": entry, cl, tp = price, price * 0.97, price * 1.05
@@ -87,18 +87,18 @@ def scan_stocks(mode):
                         "Entry": entry,
                         "Stop Loss": round(cl, 0),
                         "Take Profit": round(tp, 0),
-                        "Change (%)": round(pct, 2)
+                        "Change (%)": round(pct, 2),
+                        "Status": status # KOLOM STATUS BARU
                     })
-        except:
-            continue
+        except: continue
         
     df_res = pd.DataFrame(results)
     if not df_res.empty:
-        # Sortir berdasarkan kenaikan tertinggi
+        # Urutkan biar yang Gacor naik ke atas
         return df_res.sort_values(by="Change (%)", ascending=False).head(10)
     return pd.DataFrame()
 
-# --- 4. TAMPILAN TABEL UTAMA ---
+# --- 4. TAMPILAN TABEL ---
 st.subheader(f"🚀 Top 10 Saham Terbaik - {menu}")
 data_tabel = scan_stocks(menu)
 
@@ -107,47 +107,22 @@ if not data_tabel.empty:
         "Price": "Rp {:,.0f}", 
         "Entry": "Rp {:,.0f}", 
         "Stop Loss": "Rp {:,.0f}", 
-        "Take Profit": "Rp {:,.0f}"
+        "Take Profit": "Rp {:,.0f}",
+        "Change (%)": "{:.2f}%"
     }))
 else:
-    st.warning("⚠️ Sedang mencari data... Jika kosong, kemungkinan tidak ada saham < 500 yang sesuai kriteria strategi saat ini.")
+    st.warning("⚠️ Data belum tersedia. Tunggu sebentar atau ganti strategi.")
 
-# --- 5. AREA EDUKASI (LOCKED & DYNAMIC) ---
+# --- 5. AREA EDUKASI ---
 st.divider()
 st.subheader("📚 Logika Analisa & Strategi")
-
 if menu == "Scalping (Method A)":
-    st.info("""
-    **Analisa Scalping (Cuan Kilat):**
-    * **Logika:** Mencari saham dengan volatilitas dan volume yang mulai 'bangun'.
-    * **Tape Reading:** Wajib konfirmasi Bid/Offer di Stockbit. Pastikan Bid lebih tebal.
-    * **Action:** Target profit 1-2%. Jangan hold kelamaan kalau harga stagnan.
-    """)
+    st.info("**Scalping:** Fokus volatilitas dan volume. Target 1-2%.")
 elif menu == "BSJP (Method B)":
-    st.info("""
-    **Analisa BSJP (Beli Sore Jual Pagi):**
-    * **Logika:** Mencari saham yang akumulasi di akhir sesi (14:30 - 14:50).
-    * **Close near High:** Harga tutup harus kuat mendekati harga tertinggi hari ini.
-    * **Action:** Jual saat pembukaan pasar besok (09:00 - 09:15) untuk ambil Gap Up.
-    """)
+    st.info("**BSJP:** Beli sore (14:30-14:50). Jual besok pagi (09:00-09:15).")
 elif menu == "Day Trade (Method C)":
-    st.info("""
-    **Analisa Day Trade:**
-    * **Logika:** Mengikuti tren harian yang stabil.
-    * **Rule:** Posisi harus Cash (sudah dijual) sebelum market tutup sore ini.
-    * **Target:** Mencari profit di rentang 3-5% dalam satu hari perdagangan.
-    """)
+    st.info("**Day Trade:** Ikuti tren harian. Wajib Cash Out sebelum market tutup.")
 elif menu == "Swing Trade (Method D)":
-    st.info("""
-    **Analisa Swing Trade:**
-    * **Logika:** Memanfaatkan gelombang tren menengah (Uptrend di atas MA20).
-    * **Sabar:** Menahan posisi selama 3-14 hari sampai target tercapai.
-    * **Risk:** Stop Loss lebih longgar (7%) untuk memberi ruang 'nafas' harga.
-    """)
+    st.info("**Swing Trade:** Tren menengah di atas MA20. Hold 3-14 hari.")
 elif menu == "Gorengan Finder (Method G)":
-    st.info("""
-    **Analisa Method G (Speculative Meledak):**
-    * **Logika:** Deteksi dini 'Volume Spike' (>1.5x rata-rata) pada saham yang harganya masih murah.
-    * **Kunci:** Fokus pada saham yang baru mulai naik (Change 2-5%).
-    * **Danger:** Risiko tinggi (ditarik lalu dibanting), wajib disiplin Cut Loss!
-    """)
+    st.info("**Method G:** Deteksi Volume Spike > 1.5x. Fokus saham murah baru mulai naik.")
