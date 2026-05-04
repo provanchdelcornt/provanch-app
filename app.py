@@ -29,9 +29,10 @@ def send_telegram(message):
     except:
         pass
 
-# --- VERTEX A: DATA FETCHER (TOP VALUE BEI) ---
-def get_top_20_data():
-    hot_stocks = [
+# --- VERTEX A: DYNAMIC DATA FETCHER ---
+def get_dynamic_top_data():
+    # Daftar saham watchlist (Top Value/Volume BEI)
+    watchlist = [
         "PADI.JK", "GOTO.JK", "BUMI.JK", "ASII.JK", "BBRI.JK", 
         "TLKM.JK", "BBCA.JK", "BMRI.JK", "BRMS.JK", "ADRO.JK",
         "PTBA.JK", "ITMG.JK", "AKRA.JK", "PGAS.JK", "MEDC.JK",
@@ -39,13 +40,12 @@ def get_top_20_data():
     ]
     
     results = []
-    for s in hot_stocks:
+    for s in watchlist:
         try:
             t = yf.Ticker(s)
             info = t.fast_info
             px = info.last_price
             pc = info.regular_market_previous_close
-            # Hitung kenaikan harian
             chg = ((px - pc) / pc) * 100 if px and pc else 0
             results.append({
                 "Saham": s, 
@@ -54,13 +54,17 @@ def get_top_20_data():
             })
         except:
             continue
-    return pd.DataFrame(results)
+    
+    # --- AUTO-SORT LOGIC ---
+    # Mengurutkan saham berdasarkan Change (%) tertinggi (Mirip Top Gainer Stockbit)
+    df_sorted = pd.DataFrame(results).sort_values(by="Change (%)", ascending=False)
+    return df_sorted
 
 # --- DASHBOARD UI ---
 st.title("🚀 Provanch Scalper Pro")
-st.subheader("Monitoring Top 20 Saham Paling Rame")
+st.subheader("Monitoring Real-time (Auto-Sorted by Performance)")
 
-# Inisialisasi State (Agar data tidak hilang saat refresh)
+# Inisialisasi State
 if 'price_history' not in st.session_state:
     st.session_state.price_history = {}
 if 'status_market' not in st.session_state:
@@ -72,9 +76,9 @@ placeholder = st.empty()
 while True:
     now = datetime.now()
     current_time = now.strftime("%H:%M")
-    day_of_week = now.weekday() # 0=Senin, 4=Jumat
+    day_of_week = now.weekday() 
     
-    # --- VERTEX E: JADWAL BURSA (NOTIF) ---
+    # --- VERTEX E: JADWAL BURSA ---
     if current_time == "09:00" and st.session_state.status_market != "open" and day_of_week < 5:
         send_telegram("waktunya cari cuan mas hehe..")
         st.session_state.status_market = "open"
@@ -82,8 +86,8 @@ while True:
         send_telegram("market sudah tutup mas >_<")
         st.session_state.status_market = "closed"
 
-    # Fetch Data Terbaru
-    df = get_top_20_data()
+    # Ambil Data & Urutkan Otomatis
+    df = get_dynamic_top_data()
 
     with placeholder.container():
         # Kolom Indikator
@@ -95,10 +99,10 @@ while True:
             st.metric("Market Status", "OPEN" if market_open else "STANDBY")
         with c3:
             if not df.empty:
-                top = df.sort_values(by="Change (%)", ascending=False).iloc[0]
+                top = df.iloc[0] # Ambil baris pertama setelah di-sort
                 st.metric("Top Gainer", top['Saham'], f"{top['Change (%)']}%")
 
-        # --- TABEL UTAMA (FIXED: Tanpa Gradient Agar Tidak Error) ---
+        # Tabel Utama (Stabil & Clean)
         st.dataframe(df, use_container_width=True)
 
         # --- VERTEX D: VELOCITY DETECTION ---
@@ -110,11 +114,10 @@ while True:
                 
                 if sym in st.session_state.price_history:
                     old_px = st.session_state.price_history[sym]
-                    # Deteksi lonjakan harga dalam 30 detik
                     if old_px > 0:
                         velocity = ((px - old_px) / old_px) * 100
                         
-                        # Trigger Notif Ready
+                        # Trigger Notif Telegram jika ada lonjakan mendadak
                         if velocity >= MIN_VELOCITY and day_chg >= MIN_DAILY_CHANGE:
                             msg = (f"🔥 *SCALP MOMENTUM: {sym}*\n"
                                    f"Price: *{px}*\n"
