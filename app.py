@@ -13,11 +13,21 @@ TOKEN = "8571059270:AAGV-6nd5FrfXLxCr_GtDtKHEkceeR3HjJ4"
 CHAT_ID = "1464769031" 
 
 REFRESH_INTERVAL = 30    
-TP_PCT = 2.0  # Target BSJP biasanya 2% cukup
-SL_PCT = 1.5  # Stop Loss lebih ketat untuk BSJP
 # ========================================================
 
-st.set_page_config(page_title="Provanch BSJP Scanner", layout="wide")
+st.set_page_config(page_title="Provanch 3.1 - Hybrid Scanner", layout="wide")
+
+# Sidebar untuk Ganti Mode
+st.sidebar.header("⚙️ Mode Selection")
+trading_mode = st.sidebar.selectbox("Pilih Strategi:", ["Scalping (Day Trading)", "BSJP (Beli Sore Jual Pagi)"])
+
+# Settingan Parameter berdasarkan Mode
+if trading_mode == "BSJP (Beli Sore Jual Pagi)":
+    TP_PCT, SL_PCT = 2.0, 1.5
+    st.sidebar.info("Mode BSJP: Fokus pada akumulasi akhir sesi.")
+else:
+    TP_PCT, SL_PCT = 2.5, 1.8
+    st.sidebar.info("Mode Scalping: Fokus pada volatilitas harga.")
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
@@ -25,114 +35,76 @@ def send_telegram(message):
     try: requests.post(url, json=payload)
     except: pass
 
-# --- LOGIKA ANALISA BSJP ---
-def get_bsjp_signals():
-    # Daftar saham potensial BSJP (Likuid & Volatil)
-    tickers = [
-        "PADI.JK", "GOTO.JK", "BUMI.JK", "BRMS.JK", "RAAM.JK", 
-        "TINS.JK", "ELSA.JK", "ENRG.JK", "ASRI.JK", "GZCO.JK",
-        "WIFI.JK", "DOOH.JK", "HUMI.JK", "BAJA.JK", "BDKR.JK",
-        "NATO.JK", "GPSO.JK", "BOAT.JK", "LABA.JK", "STRK.JK", "BSJP.JK"
-    ]
-    
-    results = []
-    histories = {}
+def get_market_data(mode):
+    tickers = ["PADI.JK", "GOTO.JK", "BUMI.JK", "BRMS.JK", "RAAM.JK", "TINS.JK", "ELSA.JK", "ENRG.JK", "ASRI.JK", "GZCO.JK", "WIFI.JK", "BSJP.JK"]
+    results, histories = [], {}
     
     try:
-        # Ambil data hari ini dengan interval 5 menit
         data = yf.download(tickers, period="1d", interval="5m", group_by='ticker', threads=True, progress=False)
-        
         for s in tickers:
-            try:
-                if s not in data or data[s].empty: continue
-                valid_data = data[s].dropna()
-                if len(valid_data) < 5: continue
-                
-                px = valid_data['Close'].iloc[-1]
-                pc = data[s]['Open'].iloc[0] # Harga Open pagi tadi
-                avg_price = valid_data['Close'].mean()
-                
-                # Cek pergerakan 15 menit terakhir (Power Check)
-                last_15m_px = valid_data['Close'].iloc[-3]
-                power_score = ((px - last_15m_px) / last_15m_px) * 100
-                
-                if px > 500: continue # Filter Modal 300k
-                
-                chg = ((px - pc) / pc) * 100 
-                
-                # Syarat BSJP: Harga naik di akhir sesi & di atas rata-rata
-                status = "💤 SIDEWAYS"
-                if px > avg_price and power_score > 0.5 and chg > 2:
-                    status = "🔥 BSJP READY"
-                elif chg < 0:
-                    status = "📉 WEAK"
-                
-                results.append({
-                    "Saham": s.replace(".JK", ""),
-                    "Harga": int(px),
-                    "Power (15m)": round(power_score, 2),
-                    "Change (%)": round(chg, 2),
-                    "Status": status,
-                    "Score": power_score + chg # Helper sorting
-                })
-                histories[s.replace(".JK", "")] = valid_data[['Close']]
-            except: continue
+            if s not in data or data[s].empty: continue
+            valid_data = data[s].dropna()
+            if valid_data.empty: continue
+            
+            px = valid_data['Close'].iloc[-1]
+            pc = data[s]['Open'].iloc[0]
+            avg_price = valid_data['Close'].mean()
+            chg = ((px - pc) / pc) * 100 
+            
+            # Logika Khusus BSJP (Power Score)
+            power_15m = 0
+            if len(valid_data) >= 3:
+                power_15m = ((px - valid_data['Close'].iloc[-3]) / valid_data['Close'].iloc[-3]) * 100
+
+            status = "📈 STABLE"
+            score = chg
+            
+            if mode == "BSJP (Beli Sore Jual Pagi)":
+                if px > avg_price and power_15m > 0.4: status = "🔥 BSJP READY"
+                score = power_15m + chg
+            else:
+                if px > avg_price and chg > 2.5: status = "🚀 BOOMING"
+                score = chg
+
+            results.append({
+                "Saham": s.replace(".JK", ""), "Harga": int(px), 
+                "Power(15m)": round(power_15m, 2), "Change(%)": round(chg, 2), 
+                "Status": status, "Score": score
+            })
+            histories[s.replace(".JK", "")] = valid_data[['Close']]
+            
     except: return pd.DataFrame(), {}
     
-    if not results: return pd.DataFrame(), {}
-    
-    df = pd.DataFrame(results)
-    # Sorting berdasarkan Power & Change tertinggi
-    df = df.sort_values(by="Score", ascending=False)
+    df = pd.DataFrame(results).sort_values(by="Score", ascending=False)
     return df, histories
 
 # --- UI DASHBOARD ---
-st.title("🚀 Provanch 3.0 - BSJP Strategy")
-st.info("🔒 PERMANENT LOCK: Notif Ready & Refresh Features are Locked.")
+st.title(f"🚀 Provanch - {trading_mode}")
+st.info("🔒 Status: Notif Ready & Refresh Features Locked.")
 
 placeholder = st.empty()
 
 while True:
     now_wib = datetime.utcnow() + timedelta(hours=7)
-    df, all_hist = get_bsjp_signals()
+    df, all_hist = get_market_data(trading_mode)
 
     with placeholder.container():
         col_list, col_analysis = st.columns([2, 1])
-        
         with col_list:
-            st.subheader(f"BSJP Scanner ({now_wib.strftime('%H:%M:%S')})")
+            st.subheader(f"Scanner List ({now_wib.strftime('%H:%M:%S')})")
             st.dataframe(df.drop(columns=['Score']), use_container_width=True)
-            
             if not df.empty:
-                top_bsjp = df.iloc[0]['Saham']
-                st.subheader(f"📈 Power Graph: {top_bsjp}")
-                st.line_chart(all_hist[top_bsjp])
+                st.line_chart(all_hist[df.iloc[0]['Saham']])
 
         with col_analysis:
             if not df.empty:
-                s_name = df.iloc[0]['Saham']
-                s_px = df.iloc[0]['Harga']
-                
-                st.subheader("🛒 BSJP Order Planner")
-                st.write(f"Saham: **{s_name}** | Modal: **300k**")
-                
+                s_name, s_px = df.iloc[0]['Saham'], df.iloc[0]['Harga']
+                st.subheader("🛒 Order Planner (300k)")
                 tp_val = int(s_px * (1 + (TP_PCT/100)))
                 cl_val = int(s_px * (1 - (SL_PCT/100)))
-                total_lot = int(300000 / (s_px * 100))
-                
-                st.success(f"🎯 **Jual Besok Pagi (TP): {tp_val}**")
-                st.error(f"🛑 **Batas Proteksi (CL): {cl_val}**")
-                st.info(f"📦 **Beli Sore Ini: {total_lot} Lot**")
-                
-                # Auto-Telegram Signal di Jam Closing
-                if 15 <= now_wib.hour <= 16 and df.iloc[0]['Status'] == "🔥 BSJP READY":
-                    msg = (f"🔥 *BSJP SIGNAL DETECTED!*\n\n"
-                           f"Saham: *{s_name}*\nPrice: *{s_px}*\n"
-                           f"Power: *{df.iloc[0]['Power (15m)']}* (Strong Closing!)\n\n"
-                           f"Beli sekarang, jual besok pagi!")
-                    send_telegram(msg)
-            else:
-                st.write("Menganalisa pergerakan akhir sesi...")
+                st.success(f"🎯 Target Jual: {tp_val}")
+                st.error(f"🛑 Batas CL: {cl_val}")
+                st.info(f"📦 Beli: {int(300000 / (s_px * 100))} Lot")
 
     time.sleep(REFRESH_INTERVAL)
     st.rerun()
