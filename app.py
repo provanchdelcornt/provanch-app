@@ -25,14 +25,22 @@ def send_telegram(message):
     try: requests.post(url, json=payload)
     except: pass
 
-# --- VERTEX A: DATA FETCHER (FILTER HARGA < 500) ---
+# --- LOGIKA DETEKSI ARA ---
+def check_ara_status(price, prev_close):
+    if prev_close <= 0: return False
+    change = ((price - prev_close) / prev_close) * 100
+    # Batas ARA di Indonesia: >200 (35%), 200-500 (25%)
+    if price <= 200 and change >= 34: return True
+    if price > 200 and change >= 24: return True
+    return False
+
+# --- VERTEX A: DATA FETCHER (SMART FILTER) ---
 def get_budget_stocks():
-    # Daftar saham yang harganya biasanya di bawah 500 dan ramai (Liquid)
     watchlist = [
         "PADI.JK", "GOTO.JK", "BUMI.JK", "BRMS.JK", "DOOH.JK",
         "WIFI.JK", "STRK.JK", "HUMI.JK", "BAJA.JK", "CARE.JK",
         "FWCT.JK", "NZIA.JK", "NICL.JK", "RAAM.JK", "BDKR.JK",
-        "BIPI.JK", "ENRG.JK", "ELSA.JK", "TINS.JK", "PSAB.JK"
+        "PSAB.JK", "TINS.JK", "ELSA.JK", "ENRG.JK", "BIPI.JK"
     ]
     
     results = []
@@ -45,30 +53,38 @@ def get_budget_stocks():
             px = hist['Close'].iloc[-1]
             pc = hist['Close'].iloc[-2]
             
-            # --- FILTER HARGA DIBAWAH 500 ---
-            if px > 500: continue
+            if px > 500: continue # Tetap filter harga murah
             
-            vol_raw = hist['Volume'].iloc[-1]
-            lot_vol = int(vol_raw / 100)
             chg = ((px - pc) / pc) * 100 
+            is_ara = check_ara_status(px, pc)
+            
+            # --- PENENTUAN STATUS ---
+            status = "🔥 POTENSI"
+            if is_ara:
+                status = "🚫 ARA (JANGAN MASUK)"
+            elif chg < 0:
+                status = "📉 DROP"
             
             results.append({
                 "Saham": s, 
                 "Harga": int(px), 
-                "Bid Vol (Lot)": lot_vol,
-                "Offer Vol (Lot)": int(lot_vol * 0.8),
+                "Change (%)": round(chg, 2),
+                "Status": status,
                 "Entry": int(px),
                 "SL": int(px * (1 - (SL_PCT / 100))),
                 "TP": int(px * (1 + (TP_PCT / 100))),
-                "Change (%)": round(chg, 2)
+                "Is_ARA": is_ara # Hidden helper
             })
         except: continue
     
-    return pd.DataFrame(results).sort_values(by="Change (%)", ascending=False)
+    df = pd.DataFrame(results)
+    # SORTING PINTAR: Yang ARA ditaruh paling bawah, yang Potensi naik ditaruh atas
+    df = df.sort_values(by=["Is_ARA", "Change (%)"], ascending=[True, False])
+    return df.drop(columns=['Is_ARA'])
 
 # --- DASHBOARD UI ---
 st.title("🚀 Provanch Budget Scalper")
-st.subheader("Filter: Harga < Rp500 (Cocok buat Modal 300k)")
+st.subheader("Smart Monitoring: Otomatis Filter Saham ARA")
 
 if 'price_history' not in st.session_state:
     st.session_state.price_history = {}
@@ -87,25 +103,26 @@ while True:
         with c2: st.metric("Market Status", "OPEN" if market_is_open else "STANDBY")
         with c3:
             if not df.empty:
-                top = df.iloc[0]
-                st.metric("Top Gainer < 500", top['Saham'], f"{top['Change (%)']}%")
+                top = df.iloc[0] # Sekarang top 1 bukan ARA
+                st.metric("Best Entry", top['Saham'], f"{top['Change (%)']}%")
 
-        # Tabel Utama (Hanya Saham Murah)
         st.dataframe(df, use_container_width=True)
 
+        # Telegram hanya kirim notif jika BUKAN ARA
         if market_is_open:
             for index, row in df.iterrows():
+                if "ARA" in row['Status']: continue # Lewati notif ARA
+                
                 sym = row['Saham']
                 px = row['Harga']
                 if sym in st.session_state.price_history:
                     old_px = st.session_state.price_history[sym]
-                    if old_px > 0:
-                        velocity = ((px - old_px) / old_px) * 100
-                        if velocity >= MIN_VELOCITY:
-                            msg = (f"🎯 *BUDGET SIGNAL: {sym}*\nPrice: *{px}* (+{velocity:.2f}%)\n"
-                                   f"TP: *{row['TP']}* | SL: *{row['SL']}*\n"
-                                   f"Cocok buat scalping receh!")
-                            send_telegram(msg)
+                    velocity = ((px - old_px) / old_px) * 100
+                    if velocity >= MIN_VELOCITY:
+                        msg = (f"🎯 *SMART SIGNAL: {sym}*\nPrice: *{px}* (+{velocity:.2f}%)\n"
+                               f"Status: *BELUM ARA - AMAN ENTRY*\n"
+                               f"TP: *{row['TP']}* | SL: *{row['SL']}*")
+                        send_telegram(msg)
                 st.session_state.price_history[sym] = px
 
     time.sleep(REFRESH_INTERVAL)
