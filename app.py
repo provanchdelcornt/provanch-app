@@ -17,7 +17,7 @@ TP_PCT = 2.5
 SL_PCT = 1.8             
 # ========================================================
 
-st.set_page_config(page_title="Provanch Scalper Pro", layout="wide")
+st.set_page_config(page_title="Provanch Budget Scalper", layout="wide")
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
@@ -25,26 +25,28 @@ def send_telegram(message):
     try: requests.post(url, json=payload)
     except: pass
 
-# --- VERTEX A: DATA FETCHER (FORCED DATA) ---
-def get_dynamic_top_data():
+# --- VERTEX A: DATA FETCHER (FILTER HARGA < 500) ---
+def get_budget_stocks():
+    # Daftar saham yang harganya biasanya di bawah 500 dan ramai (Liquid)
     watchlist = [
-        "PADI.JK", "GOTO.JK", "BUMI.JK", "ASII.JK", "BBRI.JK", 
-        "TLKM.JK", "BBCA.JK", "BMRI.JK", "BRMS.JK", "ADRO.JK",
-        "PTBA.JK", "ITMG.JK", "AKRA.JK", "PGAS.JK", "MEDC.JK",
-        "ANTM.JK", "TINS.JK", "BRIS.JK", "AMMN.JK", "BBNI.JK"
+        "PADI.JK", "GOTO.JK", "BUMI.JK", "BRMS.JK", "DOOH.JK",
+        "WIFI.JK", "STRK.JK", "HUMI.JK", "BAJA.JK", "CARE.JK",
+        "FWCT.JK", "NZIA.JK", "NICL.JK", "RAAM.JK", "BDKR.JK",
+        "BIPI.JK", "ENRG.JK", "ELSA.JK", "TINS.JK", "PSAB.JK"
     ]
     
     results = []
     for s in watchlist:
         try:
             t = yf.Ticker(s)
-            # Ambil history 5 hari terakhir untuk memastikan data CLOSE ada
             hist = t.history(period="5d")
-            
             if len(hist) < 2: continue
             
-            px = hist['Close'].iloc[-1] # Harga Terakhir
-            pc = hist['Close'].iloc[-2] # Harga Penutupan Sebelumnya
+            px = hist['Close'].iloc[-1]
+            pc = hist['Close'].iloc[-2]
+            
+            # --- FILTER HARGA DIBAWAH 500 ---
+            if px > 500: continue
             
             vol_raw = hist['Volume'].iloc[-1]
             lot_vol = int(vol_raw / 100)
@@ -62,11 +64,11 @@ def get_dynamic_top_data():
             })
         except: continue
     
-    # Sortir agar yang paling cuan di atas
     return pd.DataFrame(results).sort_values(by="Change (%)", ascending=False)
 
 # --- DASHBOARD UI ---
-st.title("🚀 Provanch Scalper Pro")
+st.title("🚀 Provanch Budget Scalper")
+st.subheader("Filter: Harga < Rp500 (Cocok buat Modal 300k)")
 
 if 'price_history' not in st.session_state:
     st.session_state.price_history = {}
@@ -77,7 +79,7 @@ while True:
     now_wib = datetime.utcnow() + timedelta(hours=7)
     market_is_open = 9 <= now_wib.hour < 16 and now_wib.weekday() < 5
     
-    df = get_dynamic_top_data()
+    df = get_budget_stocks()
 
     with placeholder.container():
         c1, c2, c3 = st.columns(3)
@@ -86,8 +88,9 @@ while True:
         with c3:
             if not df.empty:
                 top = df.iloc[0]
-                st.metric("Top Gainer", top['Saham'], f"{top['Change (%)']}%")
+                st.metric("Top Gainer < 500", top['Saham'], f"{top['Change (%)']}%")
 
+        # Tabel Utama (Hanya Saham Murah)
         st.dataframe(df, use_container_width=True)
 
         if market_is_open:
@@ -99,8 +102,9 @@ while True:
                     if old_px > 0:
                         velocity = ((px - old_px) / old_px) * 100
                         if velocity >= MIN_VELOCITY:
-                            msg = (f"🎯 *SIGNAL: {sym}*\nPrice: *{px}* (+{velocity:.2f}%)\n"
-                                   f"TP: *{row['TP']}* | SL: *{row['SL']}*")
+                            msg = (f"🎯 *BUDGET SIGNAL: {sym}*\nPrice: *{px}* (+{velocity:.2f}%)\n"
+                                   f"TP: *{row['TP']}* | SL: *{row['SL']}*\n"
+                                   f"Cocok buat scalping receh!")
                             send_telegram(msg)
                 st.session_state.price_history[sym] = px
 
