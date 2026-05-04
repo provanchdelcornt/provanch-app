@@ -1,12 +1,11 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import pandas_ta as ta
+from datetime import datetime
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Provanch Intelligence v3", layout="wide")
 
-# CSS untuk styling agar user-friendly
 st.markdown("""
     <style>
     .main { background-color: #0e1117; }
@@ -26,88 +25,57 @@ menu = st.sidebar.radio("Pilih Strategi:", [
     "Gorengan Finder (Method G)"
 ])
 
-ticker = st.sidebar.text_input("Kode Saham (Contoh: GOTO.JK)", "GOTO.JK").upper()
+ticker = st.sidebar.text_input("Kode Saham", "GOTO.JK").upper()
 
-# --- ENGINE DATA ---
+# --- ENGINE DATA (PERHITUNGAN MANUAL) ---
 @st.cache_data(ttl=60)
-def get_analysis_data(symbol):
+def get_data(symbol):
     try:
         df = yf.download(symbol, period="60d", interval="1d")
         if not df.empty:
-            df['MA20'] = ta.sma(df['Close'], length=20)
+            # Hitung MA20 manual tanpa pandas_ta
+            df['MA20'] = df['Close'].rolling(window=20).mean()
+            # Hitung Avg Vol 20 harian
             df['Avg_Vol_20'] = df['Volume'].rolling(window=20).mean()
             return df
     except:
         return None
     return None
 
-df = get_analysis_data(ticker)
+df = get_data(ticker)
 
 if df is not None and not df.empty:
+    # Ambil harga terakhir (pastikan formatnya angka tunggal)
     curr = float(df['Close'].iloc[-1])
     
     # --- LOGIKA HARGA & EDUKASI ---
     if menu == "Scalping (Method A)":
         entry, cl, tp = curr, curr * 0.98, curr * 1.02
-        edu_text = """
-        **Analisa Scalping (Cuan Kilat):**
-        1. **Tape Reading:** Pantau Order Book. Bid harus lebih tebal dari Offer secara wajar.
-        2. **Power of HAKA:** Masuk jika ada transaksi besar yang menghabiskan antrean Offer.
-        3. **VWAP:** Harga wajib di atas garis VWAP harian.
-        4. **Target:** 1% - 3% saja, jangan serakah.
-        """
-
+        edu = "Analisa Scalping: Fokus Tape Reading (Order Book) & Power of HAKA. VWAP wajib Bullish."
     elif menu == "BSJP (Method B)":
         entry, cl, tp = curr, curr * 0.985, curr * 1.03
-        edu_text = """
-        **Analisa BSJP (Beli Sore Jual Pagi):**
-        1. **Timing:** Beli di menit terakhir (14:30 - 14:50 WIB).
-        2. **Konfirmasi:** Harga penutupan harus dekat dengan harga tertinggi harian (Close near High).
-        3. **Exit Strategi:** Jual di 15 menit pertama pasar buka besok (09:00 - 09:15 WIB).
-        """
-
+        edu = "BSJP: Beli 14:30 - 14:50 WIB. Cari Close near High. Jual 09:00 - 09:15 besok pagi."
     elif menu == "Day Trade (Method C)":
         entry, cl, tp = curr, curr * 0.97, curr * 1.05
-        edu_text = """
-        **Analisa Day Trading:**
-        1. **Opening Range:** Manfaatkan harga yang breakout dari konsolidasi pagi.
-        2. **Momentum:** Gunakan chart 15m/30m untuk melihat tren harian.
-        3. **Closing:** Semua posisi harus bersih (Cash) sebelum pasar tutup.
-        """
-
+        edu = "Day Trade: Memanfaatkan Opening Range Breakout. Posisi harus Cash sebelum market tutup."
     elif menu == "Swing Trade (Method D)":
         entry = float(df['MA20'].iloc[-1])
         cl, tp = entry * 0.93, entry * 1.15
-        edu_text = """
-        **Analisa Swing Trading:**
-        1. **Structure:** Beli saat saham Uptrend (Higher High).
-        2. **Garis Keramat:** Manfaatkan pantulan harga (Buy on Weakness) di area MA20.
-        3. **Sabar:** Target 10% - 20% dalam hitungan minggu.
-        """
-
+        edu = "Swing: Beli di area Support MA20 saat Uptrend. Target 10% - 20% hitungan minggu."
     elif menu == "Gorengan Finder (Method G)":
         entry, cl, tp = curr, curr * 0.97, curr * 1.10
-        vol_ratio = df['Volume'].iloc[-1] / df['Avg_Vol_20'].iloc[-1]
-        edu_text = f"""
-        **Analisa Method G (Speculative Meledak):**
-        1. **Silent Accumulation:** Deteksi volume masif (>3x rata-rata).
-        2. **Volume Ratio Saat Ini:** {vol_ratio:.2f}x.
-        3. **Kunci:** Ikut saat tembok Offer dimakan habis oleh lot-lot besar (Bandar).
-        """
+        vol_r = float(df['Volume'].iloc[-1] / df['Avg_Vol_20'].iloc[-1])
+        edu = f"Method G: Speculative Meledak. Vol Ratio saat ini: {vol_r:.2f}x (Target > 3x)."
 
-    # --- TAMPILAN INTERFACE ---
+    # --- TAMPILAN ---
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Harga Terkini", f"Rp {curr:,.0f}")
     m2.metric("🎯 Entry Point", f"Rp {entry:,.0f}")
     m3.metric("🔴 Stop Loss (CL)", f"Rp {cl:,.0f}")
     m4.metric("🟢 Take Profit (TP)", f"Rp {tp:,.0f}")
 
-    st.write("---")
-    st.markdown("### 📚 Logika & Edukasi Strategi")
-    st.info(edu_text)
-    
-    st.subheader(f"Pergerakan Harga {ticker}")
+    st.info(f"**📚 Logika Strategi:** {edu}")
+    st.subheader(f"Chart {ticker}")
     st.line_chart(df[['Close', 'MA20']])
-
 else:
-    st.error("Ticker tidak ditemukan atau data kosong.")
+    st.error("Ticker salah atau data kosong, Ky.")
