@@ -11,10 +11,11 @@ from datetime import datetime
 TOKEN = "8571059270:AAGV-6nd5FrfXLxCr_GtDtKHEkceeR3HjJ4"
 CHAT_ID = "1464769031" 
 
-# --- PARAMETERS ---
+# --- PARAMETERS SCALPING ---
 REFRESH_INTERVAL = 30    
 MIN_VELOCITY = 1.0       
-MIN_DAILY_CHANGE = 1.0   
+TP_PCT = 2.5   # Take Profit 2.5%
+SL_PCT = 1.8   # Stop Loss 1.8%
 # ========================================================
 
 st.set_page_config(page_title="Provanch Scalper Pro", layout="wide")
@@ -27,7 +28,7 @@ def send_telegram(message):
     except:
         pass
 
-# --- VERTEX A: DATA FETCHER (VOLUME BASED) ---
+# --- VERTEX A: DATA FETCHER WITH SIGNALS ---
 def get_dynamic_top_data():
     watchlist = [
         "PADI.JK", "GOTO.JK", "BUMI.JK", "ASII.JK", "BBRI.JK", 
@@ -41,37 +42,34 @@ def get_dynamic_top_data():
         try:
             t = yf.Ticker(s)
             info = t.fast_info
-            
             px = info.last_price
             pc = info.regular_market_previous_close
             
-            # Mengambil Volume (Estimasi Lot Antrean)
-            # Karena data publik terbatas, kita tampilkan volume transaksi sebagai indikator keramaian
-            bid_vol = getattr(info, 'bid_size', 0)
-            offer_vol = getattr(info, 'ask_size', 0)
+            if not px: continue
             
-            # Jika data size 0 (biasa terjadi saat standby), kita pakai indikator volume harian
-            if bid_vol == 0:
-                bid_vol = int(getattr(info, 'last_volume', 0) / 100) # Konversi ke Lot
+            chg = ((px - pc) / pc) * 100
             
-            chg = ((px - pc) / pc) * 100 if px and pc else 0
+            # --- LOGIKA SARAN HARGA (SIGNAL) ---
+            entry = px
+            stop_loss = px * (1 - (SL_PCT / 100))
+            take_profit = px * (1 + (TP_PCT / 100))
             
             results.append({
                 "Saham": s, 
-                "Harga": int(px) if px else 0, 
-                "Bid Vol (Lot)": int(bid_vol),
-                "Offer Vol (Lot)": int(offer_vol) if offer_vol > 0 else int(bid_vol * 0.8),
+                "Harga": int(px), 
+                "Entry": int(entry),
+                "Stop Loss (SL)": int(stop_loss),
+                "Take Profit (TP)": int(take_profit),
                 "Change (%)": round(chg, 2)
             })
         except:
             continue
     
-    df_sorted = pd.DataFrame(results).sort_values(by="Change (%)", ascending=False)
-    return df_sorted
+    return pd.DataFrame(results).sort_values(by="Change (%)", ascending=False)
 
 # --- DASHBOARD UI ---
 st.title("🚀 Provanch Scalper Pro")
-st.subheader("Monitoring Power: Bid Volume vs Offer Volume")
+st.subheader("Signal Mode: Entry, SL, & TP")
 
 if 'price_history' not in st.session_state:
     st.session_state.price_history = {}
@@ -85,13 +83,6 @@ while True:
     current_time = now.strftime("%H:%M")
     day_of_week = now.weekday() 
     
-    if current_time == "09:00" and st.session_state.status_market != "open" and day_of_week < 5:
-        send_telegram("waktunya cari cuan mas hehe..")
-        st.session_state.status_market = "open"
-    elif current_time == "16:00" and st.session_state.status_market != "closed":
-        send_telegram("market sudah tutup mas >_<")
-        st.session_state.status_market = "closed"
-
     df = get_dynamic_top_data()
 
     with placeholder.container():
@@ -105,25 +96,25 @@ while True:
                 top = df.iloc[0]
                 st.metric("Top Gainer", top['Saham'], f"{top['Change (%)']}%")
 
-        # Tabel Utama dengan Volume Lot
+        # --- TABEL DENGAN SARAN HARGA ---
         st.dataframe(df, use_container_width=True)
 
+        # --- TELEGRAM NOTIF WITH SIGNAL ---
         if market_open:
             for index, row in df.iterrows():
                 sym = row['Saham']
                 px = row['Harga']
-                day_chg = row['Change (%)']
-                
                 if sym in st.session_state.price_history:
                     old_px = st.session_state.price_history[sym]
-                    if old_px > 0:
-                        velocity = ((px - old_px) / old_px) * 100
-                        if velocity >= MIN_VELOCITY and day_chg >= MIN_DAILY_CHANGE:
-                            msg = (f"🔥 *SCALP MOMENTUM: {sym}*\n"
-                                   f"Price: *{px}*\n"
-                                   f"Bid Vol: *{row['Bid Vol (Lot)']}* | Offer Vol: *{row['Offer Vol (Lot)']}*\n"
-                                   f"Status: *AKSI BELI KUAT*")
-                            send_telegram(msg)
+                    velocity = ((px - old_px) / old_px) * 100
+                    
+                    if velocity >= MIN_VELOCITY:
+                        msg = (f"🎯 *SIGNAL DETECTED: {sym}*\n"
+                               f"Entry: *{row['Entry']}*\n"
+                               f"Take Profit: *{row['Take Profit (TP)']}*\n"
+                               f"Cut Loss: *{row['Stop Loss (SL)']}*\n"
+                               f"Speed: *+{velocity:.2f}%*")
+                        send_telegram(msg)
                 st.session_state.price_history[sym] = px
 
     time.sleep(REFRESH_INTERVAL)
